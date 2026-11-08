@@ -6,6 +6,7 @@ use crate::interrupts::TICKS;
 use crate::keyboard::Key;
 use crate::drivers::{BlockDevice, MemoryDisk};
 use crate::storage;
+use crate::task::{Scheduler, TaskState};
 use crate::vga::{Color, WRITER};
 use crate::{allocator, memory, print, println};
 use alloc::format;
@@ -30,6 +31,7 @@ pub struct Shell {
     text_color: Color,
     editor: Option<Editor>,
     disk: Box<dyn BlockDevice>,
+    scheduler: Scheduler,
 }
 
 impl Shell {
@@ -48,7 +50,13 @@ impl Shell {
             text_color: Color::White,
             editor: None,
             disk: Box::new(disk),
+            scheduler: Scheduler::new(),
         }
+    }
+
+    /// Advance shell-owned cooperative tasks after each timer tick.
+    pub fn poll_tasks(&mut self) {
+        self.scheduler.poll();
     }
 
     /// Create the default files, run the startup script, show the first prompt.
@@ -423,6 +431,32 @@ impl Shell {
                 let secs = ticks * 65536 / 1_193_182;
                 println!("up {} seconds ({} ticks)", secs, ticks);
             }
+            "tasks" => {
+                if self.scheduler.list().is_empty() {
+                    println!("no tasks");
+                } else {
+                    for task in self.scheduler.list() {
+                        let state = match task.state {
+                            TaskState::Sleeping => "sleeping",
+                            TaskState::Ready => "ready",
+                            TaskState::Finished => "finished",
+                        };
+                        println!("[{}] {:<10} {} (wake {})", task.id, state, task.name, task.wake_at);
+                    }
+                }
+            }
+            "sleep" => match args.parse::<u64>() {
+                Ok(seconds) => {
+                    let id = self.scheduler.spawn_sleep("shell sleep", seconds);
+                    println!("task {} sleeping for {} second(s)", id, seconds);
+                }
+                Err(_) => println!("usage: sleep <seconds>"),
+            },
+            "cancel" => match args.parse::<u64>() {
+                Ok(id) if self.scheduler.cancel(id) => println!("task {} cancelled", id),
+                Ok(_) => println!("cancel: no such task"),
+                Err(_) => println!("usage: cancel <task-id>"),
+            },
             "mem" => {
                 let (used, free) = allocator::stats();
                 let ram = memory::USABLE_BYTES.load(Ordering::Relaxed);
@@ -527,7 +561,8 @@ fn print_help() {
     println!("Files:   ls [dir]   cat f   write f text   touch f   mkdir d   rm [-r] p");
     println!("         cp a b   mv a b   cd d   pwd   tree [dir]   echo text > f (or >>)");
     println!("Editor:  edit f      (Ctrl+S save, Ctrl+X exit)");
-    println!("System:  uptime  mem  history  run <script>  color <name>  clear  rev");
+    println!("System:  uptime  tasks  sleep <seconds>  cancel <task-id>  mem  history");
+    println!("         run <script>  color <name>  clear  rev");
     println!("         about  reboot  panic  fault");
     println!("Keys:    Up/Down history, Left/Right/Home/End edit the line,");
     println!("         PgUp/PgDn scroll back, Ctrl+L clear, Ctrl+C cancel, Ctrl+U kill line");
