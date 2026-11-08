@@ -562,6 +562,8 @@ impl Shell {
                         println!("user process {} prepared: {}", id, process.name);
                         println!(" entry  {:#x}", process.entry_point);
                         println!(" stack  {:#x}", process.stack_pointer);
+                        println!(" context: ring3 entry/return frame ready");
+                        println!(" page table: pending boot-time address-space mapping");
                         println!(" syscall gate: int {:#x}, {} entries", crate::interrupts::SYSCALL_VECTOR, crate::syscall::entry_count());
                         println!(" getpid: {:?}", crate::syscall::dispatch(
                             &mut self.processes, id, crate::syscall::SYS_GETPID, 0, 0, 0
