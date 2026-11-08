@@ -1,12 +1,12 @@
 //! Process metadata and address-space boundaries.
 //!
-//! This is deliberately kernel-only groundwork. It gives future user-mode
-//! code a single place to enforce ownership and bounds before page tables are
-//! switched per process.
+//! Process metadata, user-mode context validation, and privilege transitions
+//! live here so address-space ownership is enforced before entering ring 3.
 
 use alloc::string::String;
 use alloc::vec::Vec;
 use crate::gdt;
+use core::arch::asm;
 use x86_64::registers::rflags::RFlags;
 use x86_64::structures::gdt::SegmentSelector;
 use x86_64::VirtAddr;
@@ -31,6 +31,7 @@ impl UserContext {
             code_selector: gdt::user_code_selector(),
             stack_selector: gdt::user_data_selector(),
         }
+
     }
 
     pub fn is_valid(&self, address_space: AddressSpace) -> bool {
@@ -40,6 +41,28 @@ impl UserContext {
             && address_space.contains_stack(self.stack_pointer.as_u64().saturating_sub(1))
             && self.cpu_flags.contains(RFlags::INTERRUPT_FLAG)
     }
+
+}
+
+/// Transfer control from the kernel to a validated ring-3 context.
+///
+/// The caller must have activated the process page table and must ensure the
+/// context passed here belongs to that address space.
+pub unsafe fn enter_user_mode(context: UserContext) -> ! {
+    asm!(
+        "push {stack_selector}",
+        "push {stack_pointer}",
+        "push {flags}",
+        "push {code_selector}",
+        "push {instruction_pointer}",
+        "iretq",
+        stack_selector = in(reg) context.stack_selector.0 as u64,
+        stack_pointer = in(reg) context.stack_pointer.as_u64(),
+        flags = in(reg) context.cpu_flags.bits(),
+        code_selector = in(reg) context.code_selector.0 as u64,
+        instruction_pointer = in(reg) context.instruction_pointer.as_u64(),
+        options(noreturn)
+    );
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,6 +71,8 @@ pub struct UserImage {
     pub code_size: u64,
     pub data_size: u64,
     pub stack_size: u64,
+    pub code: &'static [u8],
+    pub data: &'static [u8],
 }
 
 impl UserImage {
@@ -57,6 +82,13 @@ impl UserImage {
             code_size: 4096,
             data_size: 4096,
             stack_size: 4096 * 2,
+            // getpid(); write(0x401000, 1); hlt
+            code: &[
+                0xb8, 0x03, 0x00, 0x00, 0x00, 0xcd, 0x80,
+                0xbf, 0x00, 0x10, 0x40, 0x00, 0xbe, 0x01, 0x00, 0x00, 0x00,
+                0xb8, 0x02, 0x00, 0x00, 0x00, 0xcd, 0x80, 0xf4,
+            ],
+            data: b"U",
         }
     }
 
@@ -75,6 +107,10 @@ impl UserImage {
             stack_end,
         };
         address_space.is_valid().then_some(address_space)
+    }
+
+    pub fn is_loadable(&self) -> bool {
+        self.code.len() as u64 <= self.code_size && self.data.len() as u64 <= self.data_size
     }
 }
 
@@ -181,6 +217,9 @@ impl ProcessTable {
 
     pub fn create_user(&mut self, name: &str, image: UserImage) -> Option<ProcessId> {
         let address_space = image.address_space()?;
+        if !image.is_loadable() {
+            return None;
+        }
         let id = self.next_id;
         self.next_id = self.next_id.saturating_add(1);
         self.processes.push(Process {
@@ -307,6 +346,8 @@ mod tests {
             code_size: 1,
             data_size: 1,
             stack_size: 1,
+            code: &[],
+            data: &[],
         }).is_none());
     }
 

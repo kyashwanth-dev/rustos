@@ -18,7 +18,7 @@ cargo run
 ## Shell commands
 Files: `ls [dir]  cat f  write f text  touch f  mkdir d  rm [-r] p  cp a b  mv a b  cd d  pwd  tree [dir]  echo text > f  (or >>)`
 Editor: `edit f` (Ctrl+S save, Ctrl+X exit; press Ctrl+X twice to discard changes)
-System: `uptime  tasks  sleep <seconds>  spawn <seconds>  cancel <task-id>  ps  proc <name>  kill <pid>  mem  history  run <script>  userdemo  color <name>  clear  ui  rev  about  reboot  panic  fault`
+System: `uptime  tasks  sleep <seconds>  spawn <seconds>  cancel <task-id>  ps  proc <name>  kill <pid>  mem  history  run <script>  userdemo  color <name>  clear  gui  rev  about  reboot  panic  fault`
 
 ## Keys
 Up/Down = history, Left/Right/Home/End = edit the line, Delete/Backspace,
@@ -34,11 +34,18 @@ Ctrl+A / Ctrl+E = start / end of line. Caps Lock and Shift work.
   snapshot.
 - `sleep` and `spawn` create cooperative async tasks. `tasks` shows their
   sleeping, running, finished, or cancelled lifecycle state.
-- `process.rs` and `syscall.rs` provide validated process lifecycle, ring-3
-  launch/return contexts, and syscall ABI validation. `userdemo` prepares a
-  validated user image layout and the IDT exposes a ring-3 `int 0x80` syscall
-  gate. Physical page-table allocation, user image loading, and the final CR3
-  switch remain the next memory-manager integration step.
+- `process.rs`, `memory.rs`, and `syscall.rs` provide validated process
+  lifecycle, per-process user page tables, image loading, ring-3 launch/return
+  contexts, and syscall ABI validation. `userdemo` allocates and maps a
+  validated user image while preserving kernel mappings, activates its CR3,
+  enters ring 3 with `iretq`, executes a user `int 0x80`, and returns through
+  the IDT. The syscall ABI now reads `rax/rdi/rsi/rdx`, validates active
+  process ranges, returns values in `rax`, and supports `getpid`, `write`,
+  `yield`, and `exit`. The address-space manager also exposes the CR3
+  activation primitive for the eventual ring-3 scheduler.
+- `gui` opens a lightweight interactive text desktop. Use arrow keys or
+  `Tab` to select Files, Tasks, System, or Shell; press `Enter` to open a
+  panel and `Esc` to return to the command prompt.
 - Source layout: `vga.rs` screen+scrollback, `keyboard.rs` scancodes->keys,
   `fs.rs` filesystem, `editor.rs` editor, `shell.rs` commands, `memory.rs` +
   `allocator.rs` paging and heap, `gdt.rs`/`interrupts.rs`/`pic.rs` CPU+hardware.

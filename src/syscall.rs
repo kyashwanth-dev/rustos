@@ -13,6 +13,12 @@ pub const SYS_GETPID: u64 = 3;
 pub const SYS_YIELD: u64 = 4;
 
 static SYSCALL_ENTRIES: AtomicU64 = AtomicU64::new(0);
+static CURRENT_PROCESS: AtomicU64 = AtomicU64::new(0);
+static DATA_START: AtomicU64 = AtomicU64::new(0);
+static DATA_END: AtomicU64 = AtomicU64::new(0);
+static STACK_START: AtomicU64 = AtomicU64::new(0);
+static STACK_END: AtomicU64 = AtomicU64::new(0);
+static LAST_EXIT: AtomicU64 = AtomicU64::new(u64::MAX);
 
 pub fn record_entry() {
     SYSCALL_ENTRIES.fetch_add(1, Ordering::Relaxed);
@@ -20,6 +26,52 @@ pub fn record_entry() {
 
 pub fn entry_count() -> u64 {
     SYSCALL_ENTRIES.load(Ordering::Relaxed)
+}
+
+pub fn activate_process(process_id: ProcessId, address_space: crate::process::AddressSpace) {
+    CURRENT_PROCESS.store(process_id, Ordering::Relaxed);
+    DATA_START.store(address_space.data_start, Ordering::Relaxed);
+    DATA_END.store(address_space.data_end, Ordering::Relaxed);
+    STACK_START.store(address_space.stack_start, Ordering::Relaxed);
+    STACK_END.store(address_space.stack_end, Ordering::Relaxed);
+    LAST_EXIT.store(u64::MAX, Ordering::Relaxed);
+}
+
+pub fn active_process() -> ProcessId {
+    CURRENT_PROCESS.load(Ordering::Relaxed)
+}
+
+pub fn last_exit() -> Option<i64> {
+    match LAST_EXIT.load(Ordering::Relaxed) {
+        u64::MAX => None,
+        code => Some(code as i64),
+    }
+}
+
+pub fn dispatch_active(number: u64, arg0: u64, arg1: u64, _arg2: u64) -> SyscallResult {
+    let process_id = active_process();
+    if process_id == 0 {
+        return Err(SyscallError::NoSuchProcess);
+    }
+    match number {
+        SYS_EXIT => {
+            LAST_EXIT.store(arg0, Ordering::Relaxed);
+            Ok(0)
+        }
+        SYS_WRITE => {
+            let data_start = DATA_START.load(Ordering::Relaxed);
+            let data_end = DATA_END.load(Ordering::Relaxed);
+            let stack_start = STACK_START.load(Ordering::Relaxed);
+            let stack_end = STACK_END.load(Ordering::Relaxed);
+            let end = arg0.checked_add(arg1).ok_or(SyscallError::InvalidPointer)?;
+            let valid = (data_start <= arg0 && end <= data_end)
+                || (stack_start <= arg0 && end <= stack_end);
+            if valid { Ok(arg1) } else { Err(SyscallError::InvalidPointer) }
+        }
+        SYS_GETPID => Ok(process_id),
+        SYS_YIELD => Ok(0),
+        _ => Err(SyscallError::Unknown),
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
