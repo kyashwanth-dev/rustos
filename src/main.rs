@@ -78,7 +78,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     log_ok(format_args!("block storage, filesystem persistence"));
     log_ok(format_args!("filesystem + shell\n"));
 
-    let mut shell = shell::Shell::new();
+    let mut shell = shell::Shell::with_memory(phys_mem_offset, frame_allocator);
     shell.start();
 
     loop {

@@ -7,7 +7,7 @@ use crate::keyboard::Key;
 use crate::drivers::{ata::AtaPio, BlockDevice, MemoryDisk};
 use crate::storage;
 use crate::task::{Scheduler, TaskState};
-use crate::process::{AddressSpace, ProcessState, ProcessTable, UserImage};
+use crate::process::{enter_user_mode, AddressSpace, ProcessState, ProcessTable, UserImage};
 use crate::ui;
 use crate::vga::{Color, WRITER};
 use crate::{allocator, memory, print, println};
@@ -17,6 +17,7 @@ use alloc::vec::Vec;
 use alloc::boxed::Box;
 use core::sync::atomic::Ordering;
 use x86_64::instructions::port::Port;
+use x86_64::VirtAddr;
 
 const MAX_HISTORY: usize = 50;
 const MAX_SCRIPT_DEPTH: usize = 3;
@@ -36,6 +37,16 @@ pub struct Shell {
     scheduler: Scheduler,
     processes: ProcessTable,
     shell_process: u64,
+    user_memory: Option<UserMemory>,
+    user_spaces: Vec<(u64, memory::UserAddressSpace)>,
+    gui_mode: bool,
+    gui_focus: usize,
+    gui_status: String,
+}
+
+struct UserMemory {
+    physical_memory_offset: VirtAddr,
+    frame_allocator: memory::BootInfoFrameAllocator,
 }
 
 impl Shell {
@@ -47,6 +58,21 @@ impl Shell {
                     .expect("memory disk initialization failed"))
             });
         Self::with_boxed_disk(disk)
+    }
+
+    pub fn with_memory(
+        physical_memory_offset: VirtAddr,
+        frame_allocator: memory::BootInfoFrameAllocator,
+    ) -> Self {
+        let disk: Box<dyn BlockDevice> = unsafe { AtaPio::detect_primary_master() }
+            .map(|disk| Box::new(disk) as Box<dyn BlockDevice>)
+            .unwrap_or_else(|| {
+                Box::new(MemoryDisk::new(FS_SECTORS + FS_START_SECTOR)
+                    .expect("memory disk initialization failed"))
+            });
+        let mut shell = Self::with_boxed_disk(disk);
+        shell.user_memory = Some(UserMemory { physical_memory_offset, frame_allocator });
+        shell
     }
 
     pub fn with_disk<D: BlockDevice + 'static>(disk: D) -> Self {
@@ -70,6 +96,11 @@ impl Shell {
             scheduler: Scheduler::new(),
             processes,
             shell_process,
+            user_memory: None,
+            user_spaces: Vec::new(),
+            gui_mode: false,
+            gui_focus: 0,
+            gui_status: String::from("Ready"),
         }
     }
 
@@ -131,6 +162,10 @@ impl Shell {
             self.editor_key(key);
             return;
         }
+        if self.gui_mode {
+            self.handle_gui_key(key);
+            return;
+        }
         match key {
             Key::Char(c) => {
                 if self.line.len() < self.max_line() {
@@ -139,6 +174,7 @@ impl Shell {
                     self.hist_pos = None;
                     self.redraw_line();
                 }
+
             }
             Key::Enter => {
                 println!();
@@ -146,7 +182,7 @@ impl Shell {
                 self.cursor = 0;
                 self.hist_pos = None;
                 self.execute(&line, true, 0);
-                if self.editor.is_none() {
+                if self.editor.is_none() && !self.gui_mode {
                     self.redraw_line();
                 }
             }
@@ -204,6 +240,76 @@ impl Shell {
             }
             _ => {}
         }
+    }
+
+    fn handle_gui_key(&mut self, key: Key) {
+        match key {
+            Key::Escape | Key::Ctrl('c') => self.leave_gui(),
+            Key::Left | Key::Up => {
+                self.gui_focus = self.gui_focus.saturating_sub(1);
+                self.draw_gui();
+            }
+            Key::Right | Key::Down | Key::Tab => {
+                self.gui_focus = (self.gui_focus + 1) % 4;
+                self.draw_gui();
+            }
+            Key::Enter => self.activate_gui_panel(),
+            Key::Char('1') | Key::Ctrl('f') => {
+                self.gui_focus = 0;
+                self.draw_gui();
+            }
+            Key::Char('2') => {
+                self.gui_focus = 1;
+                self.draw_gui();
+            }
+            Key::Char('3') => {
+                self.gui_focus = 2;
+                self.draw_gui();
+            }
+            Key::Char('4') => {
+                self.gui_focus = 3;
+                self.draw_gui();
+            }
+            _ => {}
+        }
+    }
+
+    fn activate_gui_panel(&mut self) {
+        match self.gui_focus {
+            0 => {
+                self.gui_status = String::from("Opening file browser...");
+                self.draw_gui();
+                self.gui_mode = false;
+                self.execute("ls", false, 0);
+                self.redraw_line();
+            }
+            1 => {
+                self.gui_status = String::from("Opening task monitor...");
+                self.draw_gui();
+                self.gui_mode = false;
+                self.execute("tasks", false, 0);
+                self.redraw_line();
+            }
+            2 => {
+                self.gui_status = String::from("Opening system monitor...");
+                self.draw_gui();
+                self.gui_mode = false;
+                self.execute("mem", false, 0);
+                self.redraw_line();
+            }
+            _ => self.leave_gui(),
+        }
+    }
+
+    fn draw_gui(&self) {
+        ui::draw_gui(&self.fs.cwd_string(), self.gui_focus, &self.gui_status);
+    }
+
+    fn leave_gui(&mut self) {
+        self.gui_mode = false;
+        self.gui_status = String::from("Returned to shell");
+        WRITER.lock().clear();
+        self.redraw_line();
     }
 
     fn history_up(&mut self) {
@@ -319,7 +425,12 @@ impl Shell {
                 None => println!("{}", args),
             },
             "clear" => WRITER.lock().clear(),
-            "ui" | "desktop" => ui::draw(&self.fs.cwd_string()),
+            "ui" | "desktop" | "gui" => {
+                self.gui_mode = true;
+                self.gui_focus = 0;
+                self.gui_status = String::from("Ready");
+                self.draw_gui();
+            }
             "pwd" => println!("{}", self.fs.cwd_string()),
             "cd" => {
                 let target = if args.is_empty() { "/" } else { args };
@@ -555,15 +666,21 @@ impl Shell {
                 println!("GDT, IDT, PIC, keyboard, paging, heap, filesystem, editor, shell.");
             }
             "userdemo" => {
-                match self.processes.create_user("user-demo", UserImage::demo()) {
+                let image = UserImage::demo();
+                match self.processes.create_user("user-demo", image) {
                     Some(id) => {
                         let process = self.processes.get(id).expect("new process missing");
                         let data_start = process.address_space.data_start;
-                        println!("user process {} prepared: {}", id, process.name);
-                        println!(" entry  {:#x}", process.entry_point);
-                        println!(" stack  {:#x}", process.stack_pointer);
+                        let address_space = process.address_space;
+                        let entry_point = process.entry_point;
+                        let stack_pointer = process.stack_pointer;
+                        let process_name = process.name.clone();
+                        let mapped = self.map_user_process(id, address_space, image);
+                        println!("user process {} prepared: {}", id, process_name);
+                        println!(" entry  {:#x}", entry_point);
+                        println!(" stack  {:#x}", stack_pointer);
                         println!(" context: ring3 entry/return frame ready");
-                        println!(" page table: pending boot-time address-space mapping");
+                        println!(" page table: {}", if mapped { "mapped" } else { "unavailable" });
                         println!(" syscall gate: int {:#x}, {} entries", crate::interrupts::SYSCALL_VECTOR, crate::syscall::entry_count());
                         println!(" getpid: {:?}", crate::syscall::dispatch(
                             &mut self.processes, id, crate::syscall::SYS_GETPID, 0, 0, 0
@@ -572,6 +689,20 @@ impl Shell {
                             &mut self.processes, id, crate::syscall::SYS_WRITE,
                             data_start, 1, 0
                         ));
+                        if mapped {
+                            let context = self.processes.user_context(id).expect("user context missing");
+                            crate::syscall::activate_process(id, address_space);
+                            let _ = self.processes.switch_to(id);
+                            let user_space = self.user_spaces.iter()
+                                .find(|(process_id, _)| *process_id == id)
+                                .map(|(_, space)| space)
+                                .expect("user address space missing");
+                            println!(" launching ring-3 image; syscall and timer interrupts are active");
+                            unsafe {
+                                user_space.activate();
+                                enter_user_mode(context);
+                            }
+                        }
                     }
                     None => println!("userdemo: invalid image"),
                 }
@@ -581,6 +712,7 @@ impl Shell {
                 // Write to an address that isn't mapped to anything.
                 unsafe { (0xdead_beef as *mut u8).write_volatile(42) };
             }
+
             "reboot" => {
                 // Ask the keyboard controller to pulse the CPU reset line.
                 unsafe { Port::<u8>::new(0x64).write(0xFE) };
@@ -590,6 +722,39 @@ impl Shell {
             }
             other => println!("unknown command: '{}' (try 'help')", other),
         }
+    }
+
+    fn map_user_process(
+        &mut self,
+        id: u64,
+        address_space: AddressSpace,
+        image: UserImage,
+    ) -> bool {
+        let memory = match self.user_memory.as_mut() {
+            Some(memory) => memory,
+            None => return false,
+        };
+        let mut user_space = match memory::UserAddressSpace::new(
+            memory.physical_memory_offset,
+            &mut memory.frame_allocator,
+        ) {
+            Some(space) => space,
+            None => return false,
+        };
+        if !user_space.map_image(
+            address_space,
+            image.code,
+            image.data,
+            &mut memory.frame_allocator,
+        ) {
+            return false;
+        }
+        let root = user_space.root_address();
+        if !self.processes.set_page_table_root(id, root) {
+            return false;
+        }
+        self.user_spaces.push((id, user_space));
+        true
     }
 
     fn run_script(&mut self, path: &str, depth: usize) {
@@ -641,7 +806,7 @@ fn print_help() {
     println!("         cp a b   mv a b   cd d   pwd   tree [dir]   echo text > f (or >>)");
     println!("Editor:  edit f      (Ctrl+S save, Ctrl+X exit)");
     println!("System:  uptime  tasks  sleep <seconds>  spawn <seconds>  cancel <task-id>  ps  proc <name>  kill <pid>  userdemo");
-    println!("         run <script>  color <name>  clear  ui  rev");
+    println!("         run <script>  color <name>  clear  gui  ui  rev");
     println!("         about  reboot  panic  fault");
     println!("Keys:    Up/Down history, Left/Right/Home/End edit the line,");
     println!("         PgUp/PgDn scroll back, Ctrl+L clear, Ctrl+C cancel, Ctrl+U kill line");

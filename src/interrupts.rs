@@ -91,10 +91,45 @@ extern "x86-interrupt" fn keyboard_handler(_stack_frame: InterruptStackFrame) {
 
 extern "x86-interrupt" fn syscall_handler(stack_frame: InterruptStackFrame) {
     crate::syscall::record_entry();
-    // The interrupt ABI returns through the CPU-built frame. Keeping this
-    // handler side-effect free until a process context is installed prevents
-    // accidental kernel-to-user privilege transitions.
-    if stack_frame.code_segment.rpl() != PrivilegeLevel::Ring3 {
+    if stack_frame.code_segment.rpl() == PrivilegeLevel::Ring3 {
+        let (number, arg0, arg1, arg2) = unsafe {
+            let mut number: u64;
+            let mut arg0: u64;
+            let mut arg1: u64;
+            let mut arg2: u64;
+            core::arch::asm!(
+                "mov {number}, rax",
+                "mov {arg0}, rdi",
+                "mov {arg1}, rsi",
+                "mov {arg2}, rdx",
+                number = out(reg) number,
+                arg0 = out(reg) arg0,
+                arg1 = out(reg) arg1,
+                arg2 = out(reg) arg2,
+                options(nomem, nostack, preserves_flags),
+            );
+            (number, arg0, arg1, arg2)
+        };
+        let result = crate::syscall::dispatch_active(number, arg0, arg1, arg2);
+        let value = match result {
+            Ok(value) => {
+                println!("SYSCALL {} -> {}", number, value);
+                value
+            }
+            Err(error) => {
+                println!("SYSCALL {} rejected: {:?}", number, error);
+                u64::MAX
+            }
+        };
+        unsafe {
+            core::arch::asm!(
+                "mov rax, {value}",
+                value = in(reg) value,
+                out("rax") _,
+                options(nomem, nostack, preserves_flags),
+            );
+        }
+    } else {
         println!("SYSCALL: rejected non-user caller");
     }
 }
