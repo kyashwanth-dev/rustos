@@ -44,3 +44,44 @@ pub fn dispatch(
         _ => Err(SyscallError::Unknown),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{dispatch, SyscallError, SYS_EXIT, SYS_WRITE};
+    use crate::process::{AddressSpace, ProcessTable};
+
+    fn table_with_process() -> (ProcessTable, u64) {
+        let mut table = ProcessTable::new();
+        let id = table.create("test", AddressSpace::kernel_placeholder());
+        (table, id)
+    }
+
+    #[test]
+    fn write_accepts_data_and_stack_ranges() {
+        let (mut table, id) = table_with_process();
+        let space = table.get(id).unwrap().address_space;
+        assert_eq!(dispatch(&mut table, id, SYS_WRITE, space.data_start, 8), Ok(0));
+        assert_eq!(dispatch(&mut table, id, SYS_WRITE, space.stack_start, 8), Ok(0));
+    }
+
+    #[test]
+    fn write_rejects_kernel_and_overflow_ranges() {
+        let (mut table, id) = table_with_process();
+        let space = table.get(id).unwrap().address_space;
+        assert_eq!(
+            dispatch(&mut table, id, SYS_WRITE, space.code_start, 1),
+            Err(SyscallError::InvalidPointer)
+        );
+        assert_eq!(
+            dispatch(&mut table, id, SYS_WRITE, u64::MAX - 1, 4),
+            Err(SyscallError::InvalidPointer)
+        );
+    }
+
+    #[test]
+    fn exit_marks_process_and_unknown_calls_fail() {
+        let (mut table, id) = table_with_process();
+        assert_eq!(dispatch(&mut table, id, SYS_EXIT, 12, 0, 0), Ok(0));
+        assert_eq!(dispatch(&mut table, id, 99, 0, 0, 0), Err(SyscallError::Unknown));
+    }
+}

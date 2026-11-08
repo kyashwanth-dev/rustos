@@ -7,6 +7,7 @@ use crate::keyboard::Key;
 use crate::drivers::{ata::AtaPio, BlockDevice, MemoryDisk};
 use crate::storage;
 use crate::task::{Scheduler, TaskState};
+use crate::process::{AddressSpace, ProcessState, ProcessTable};
 use crate::ui;
 use crate::vga::{Color, WRITER};
 use crate::{allocator, memory, print, println};
@@ -33,6 +34,8 @@ pub struct Shell {
     editor: Option<Editor>,
     disk: Box<dyn BlockDevice>,
     scheduler: Scheduler,
+    processes: ProcessTable,
+    shell_process: u64,
 }
 
 impl Shell {
@@ -51,6 +54,9 @@ impl Shell {
     }
 
     fn with_boxed_disk(disk: Box<dyn BlockDevice>) -> Self {
+        let mut processes = ProcessTable::new();
+        let shell_process = processes.create("shell", AddressSpace::kernel_placeholder());
+        let _ = processes.switch_to(shell_process);
         Shell {
             fs: FileSystem::new(),
             line: String::new(),
@@ -62,6 +68,8 @@ impl Shell {
             editor: None,
             disk,
             scheduler: Scheduler::new(),
+            processes,
+            shell_process,
         }
     }
 
@@ -460,6 +468,33 @@ impl Shell {
                     }
                 }
             }
+            "ps" | "processes" => {
+                for process in self.processes.list() {
+                    let state = match process.state {
+                        ProcessState::Ready => "ready",
+                        ProcessState::Running => "running",
+                        ProcessState::Exited(code) => {
+                            println!("[{}] exited({}) {}", process.id, code, process.name);
+                            continue;
+                        }
+                    };
+                    println!("[{}] {:<7} {}", process.id, state, process.name);
+                }
+            }
+            "proc" => {
+                if args.is_empty() {
+                    println!("usage: proc <name>");
+                } else {
+                    let id = self.processes.create(args, AddressSpace::kernel_placeholder());
+                    println!("process {} created: {}", id, args);
+                }
+            }
+            "kill" => match args.parse::<u64>() {
+                Ok(id) if id == self.shell_process => println!("kill: cannot terminate shell"),
+                Ok(id) if self.processes.exit(id, 0) => println!("process {} exited", id),
+                Ok(_) => println!("kill: no such process"),
+                Err(_) => println!("usage: kill <process-id>"),
+            },
             "sleep" => match args.parse::<u64>() {
                 Ok(seconds) => {
                     let id = self.scheduler.spawn_sleep("shell sleep", seconds);
@@ -583,7 +618,7 @@ fn print_help() {
     println!("Files:   ls [dir]   cat f   write f text   touch f   mkdir d   rm [-r] p");
     println!("         cp a b   mv a b   cd d   pwd   tree [dir]   echo text > f (or >>)");
     println!("Editor:  edit f      (Ctrl+S save, Ctrl+X exit)");
-    println!("System:  uptime  tasks  sleep <seconds>  spawn <seconds>  cancel <task-id>  mem  history");
+    println!("System:  uptime  tasks  sleep <seconds>  spawn <seconds>  cancel <task-id>  ps  proc <name>  kill <pid>");
     println!("         run <script>  color <name>  clear  ui  rev");
     println!("         about  reboot  panic  fault");
     println!("Keys:    Up/Down history, Left/Right/Home/End edit the line,");
