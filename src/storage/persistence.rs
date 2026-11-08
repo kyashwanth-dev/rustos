@@ -22,3 +22,25 @@ pub fn save<D: BlockDevice + ?Sized>(disk: &mut D, start: u64, sectors: u64, dat
     raw[..encoded.len()].copy_from_slice(&encoded);
     disk.write_sectors(start, &raw)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{load, save};
+    use crate::drivers::MemoryDisk;
+
+    #[test]
+    fn save_load_round_trip() {
+        let mut disk = MemoryDisk::new(4).unwrap();
+        save(&mut disk, 1, 2, b"persistent data").unwrap();
+        assert_eq!(load(&mut disk, 1, 2).unwrap().as_deref(), Some(&b"persistent data"[..]));
+    }
+
+    #[test]
+    fn corrupt_record_is_treated_as_missing() {
+        let mut disk = MemoryDisk::new(2).unwrap();
+        let mut raw = [0u8; 512];
+        raw[0] = 1;
+        disk.write_sector(1, &raw).unwrap();
+        assert!(load(&mut disk, 1, 1).unwrap().is_none());
+    }
+}

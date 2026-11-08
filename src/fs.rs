@@ -392,3 +392,28 @@ fn join(comps: &[String]) -> String {
 fn is_prefix(prefix: &[String], path: &[String]) -> bool {
     path.len() >= prefix.len() && path[..prefix.len()] == *prefix
 }
+
+#[cfg(test)]
+mod tests {
+    use super::FileSystem;
+
+    #[test]
+    fn snapshot_round_trip_preserves_tree_and_cwd_paths() {
+        let mut fs = FileSystem::new();
+        fs.mkdir("/home").unwrap();
+        fs.mkdir("/home/user").unwrap();
+        fs.write("/home/user/notes.txt", b"hello".to_vec(), false).unwrap();
+        fs.chdir("/home/user").unwrap();
+
+        let restored = FileSystem::from_snapshot(&fs.snapshot()).unwrap();
+        assert_eq!(restored.read("/home/user/notes.txt").unwrap(), b"hello");
+        assert_eq!(restored.cwd_string(), "/");
+        assert_eq!(restored.absolute_string("../user/notes.txt"), "/user/notes.txt");
+    }
+
+    #[test]
+    fn paths_cannot_escape_root() {
+        let fs = FileSystem::new();
+        assert_eq!(fs.absolute_string("../../tmp"), "/tmp");
+    }
+}

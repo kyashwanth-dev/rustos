@@ -4,7 +4,7 @@ use crate::editor::Editor;
 use crate::fs::FileSystem;
 use crate::interrupts::TICKS;
 use crate::keyboard::Key;
-use crate::drivers::{BlockDevice, MemoryDisk};
+use crate::drivers::{ata::AtaPio, BlockDevice, MemoryDisk};
 use crate::storage;
 use crate::task::{Scheduler, TaskState};
 use crate::vga::{Color, WRITER};
@@ -36,10 +36,20 @@ pub struct Shell {
 
 impl Shell {
     pub fn new() -> Self {
-        Self::with_disk(MemoryDisk::new(FS_SECTORS + FS_START_SECTOR).expect("memory disk initialization failed"))
+        let disk: Box<dyn BlockDevice> = unsafe { AtaPio::detect_primary_master() }
+            .map(|disk| Box::new(disk) as Box<dyn BlockDevice>)
+            .unwrap_or_else(|| {
+                Box::new(MemoryDisk::new(FS_SECTORS + FS_START_SECTOR)
+                    .expect("memory disk initialization failed"))
+            });
+        Self::with_boxed_disk(disk)
     }
 
     pub fn with_disk<D: BlockDevice + 'static>(disk: D) -> Self {
+        Self::with_boxed_disk(Box::new(disk))
+    }
+
+    fn with_boxed_disk(disk: Box<dyn BlockDevice>) -> Self {
         Shell {
             fs: FileSystem::new(),
             line: String::new(),
@@ -49,7 +59,7 @@ impl Shell {
             saved_line: String::new(),
             text_color: Color::White,
             editor: None,
-            disk: Box::new(disk),
+            disk,
             scheduler: Scheduler::new(),
         }
     }
@@ -432,14 +442,16 @@ impl Shell {
                 println!("up {} seconds ({} ticks)", secs, ticks);
             }
             "tasks" => {
-                if self.scheduler.list().is_empty() {
+                if self.scheduler.list().next().is_none() {
                     println!("no tasks");
                 } else {
                     for task in self.scheduler.list() {
                         let state = match task.state {
                             TaskState::Sleeping => "sleeping",
                             TaskState::Ready => "ready",
+                            TaskState::Running => "running",
                             TaskState::Finished => "finished",
+                            TaskState::Cancelled => "cancelled",
                         };
                         println!("[{}] {:<10} {} (wake {})", task.id, state, task.name, task.wake_at);
                     }
@@ -451,6 +463,13 @@ impl Shell {
                     println!("task {} sleeping for {} second(s)", id, seconds);
                 }
                 Err(_) => println!("usage: sleep <seconds>"),
+            },
+            "spawn" => match args.parse::<u64>() {
+                Ok(seconds) => {
+                    let id = self.scheduler.spawn_sleep("async shell task", seconds);
+                    println!("task {} spawned for {} second(s)", id, seconds);
+                }
+                Err(_) => println!("usage: spawn <seconds>"),
             },
             "cancel" => match args.parse::<u64>() {
                 Ok(id) if self.scheduler.cancel(id) => println!("task {} cancelled", id),
@@ -561,7 +580,7 @@ fn print_help() {
     println!("Files:   ls [dir]   cat f   write f text   touch f   mkdir d   rm [-r] p");
     println!("         cp a b   mv a b   cd d   pwd   tree [dir]   echo text > f (or >>)");
     println!("Editor:  edit f      (Ctrl+S save, Ctrl+X exit)");
-    println!("System:  uptime  tasks  sleep <seconds>  cancel <task-id>  mem  history");
+    println!("System:  uptime  tasks  sleep <seconds>  spawn <seconds>  cancel <task-id>  mem  history");
     println!("         run <script>  color <name>  clear  rev");
     println!("         about  reboot  panic  fault");
     println!("Keys:    Up/Down history, Left/Right/Home/End edit the line,");

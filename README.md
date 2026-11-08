@@ -18,7 +18,7 @@ cargo run
 ## Shell commands
 Files: `ls [dir]  cat f  write f text  touch f  mkdir d  rm [-r] p  cp a b  mv a b  cd d  pwd  tree [dir]  echo text > f  (or >>)`
 Editor: `edit f` (Ctrl+S save, Ctrl+X exit; press Ctrl+X twice to discard changes)
-System: `uptime  tasks  sleep <seconds>  cancel <task-id>  mem  history  run <script>  color <name>  clear  rev  about  reboot  panic  fault`
+System: `uptime  tasks  sleep <seconds>  spawn <seconds>  cancel <task-id>  mem  history  run <script>  color <name>  clear  rev  about  reboot  panic  fault`
 
 ## Keys
 Up/Down = history, Left/Right/Home/End = edit the line, Delete/Backspace,
@@ -26,9 +26,14 @@ PgUp/PgDn = scroll back, Ctrl+L clear, Ctrl+C cancel, Ctrl+U kill line,
 Ctrl+A / Ctrl+E = start / end of line. Caps Lock and Shift work.
 
 ## Notes
-- The filesystem is backed by the block-storage layer; the default memory disk
-  keeps the storage path available when no hardware disk is configured and
-  resets on reboot.
+- The filesystem probes the primary-master ATA disk at boot and falls back to
+  the memory disk when no usable ATA device is present. The fallback resets on
+  reboot.
+- `sleep` and `spawn` create cooperative async tasks. `tasks` shows their
+  sleeping, running, finished, or cancelled lifecycle state.
+- `process.rs` and `syscall.rs` provide process address-space and syscall ABI
+  groundwork; user-mode page-table switching and a real syscall entry point
+  are not implemented yet.
 - Source layout: `vga.rs` screen+scrollback, `keyboard.rs` scancodes->keys,
   `fs.rs` filesystem, `editor.rs` editor, `shell.rs` commands, `memory.rs` +
   `allocator.rs` paging and heap, `gdt.rs`/`interrupts.rs`/`pic.rs` CPU+hardware.
