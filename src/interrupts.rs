@@ -68,6 +68,7 @@ extern "x86-interrupt" fn page_fault_handler(
 
 extern "x86-interrupt" fn timer_handler(_stack_frame: InterruptStackFrame) {
     TICKS.fetch_add(1, Ordering::Relaxed);
+    crate::task::on_timer_tick();
     unsafe { PICS.lock().end_of_interrupt(TIMER_VECTOR) };
 }
 

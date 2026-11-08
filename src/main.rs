@@ -5,6 +5,7 @@
 extern crate alloc;
 
 mod allocator;
+mod drivers;
 mod editor;
 mod fs;
 mod gdt;
@@ -14,6 +15,8 @@ mod keyboard;
 mod memory;
 mod pic;
 mod shell;
+mod storage;
+mod task;
 mod vga;
 
 use bootloader::{entry_point, BootInfo};
@@ -75,6 +78,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     shell.start();
 
     loop {
+        task::tick();
         // Check for input with interrupts off, so a key can't slip in between
         // "queue is empty" and "go to sleep". enable_and_hlt does both atomically.
         x86_64::instructions::interrupts::disable();

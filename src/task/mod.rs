@@ -1,6 +1,11 @@
 //! Cooperative task bookkeeping for RustOS.
 //! Tasks advance only when the kernel calls `task::tick()` from its main loop.
 
+pub mod executor;
+pub mod keyboard_stream;
+pub mod task;
+pub mod timer;
+
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -68,3 +73,4 @@ impl Scheduler {
 pub fn on_timer_tick() { NOW.fetch_add(1, Ordering::Relaxed); }
 pub fn ticks() -> u64 { NOW.load(Ordering::Relaxed) }
 pub fn seconds() -> u64 { ticks() / 18 }
+pub fn tick() {}
