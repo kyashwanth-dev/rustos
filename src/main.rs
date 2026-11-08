@@ -14,8 +14,10 @@ mod interrupts;
 mod keyboard;
 mod memory;
 mod pic;
+mod process;
 mod shell;
 mod storage;
+mod syscall;
 mod task;
 mod vga;
 
@@ -77,15 +79,10 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     let mut shell = shell::Shell::new();
     shell.start();
-    let mut executor = task::executor::Executor::new();
-    executor.spawn(async {
-        task::timer::sleep(1).await;
-    });
 
     loop {
         task::tick();
         shell.poll_tasks();
-        executor.poll();
         // Check for input with interrupts off, so a key can't slip in between
         // "queue is empty" and "go to sleep". enable_and_hlt does both atomically.
         x86_64::instructions::interrupts::disable();

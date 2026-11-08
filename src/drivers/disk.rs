@@ -92,3 +92,27 @@ impl BlockDevice for MemoryDisk {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{BlockDevice, DiskError, MemoryDisk, SECTOR_SIZE};
+
+    #[test]
+    fn memory_disk_round_trip_and_bounds() {
+        let mut disk = MemoryDisk::new(2).unwrap();
+        let mut written = [0u8; SECTOR_SIZE];
+        written[0] = 0x5a;
+        disk.write_sector(1, &written).unwrap();
+        let mut read = [0u8; SECTOR_SIZE];
+        disk.read_sector(1, &mut read).unwrap();
+        assert_eq!(read, written);
+        assert_eq!(disk.read_sector(2, &mut read), Err(DiskError::OutOfBounds));
+        assert_eq!(disk.write_sectors(0, &[0; SECTOR_SIZE - 1]), Err(DiskError::InvalidBuffer));
+    }
+
+    #[test]
+    fn read_only_disk_rejects_writes() {
+        let mut disk = MemoryDisk::read_only(1).unwrap();
+        assert_eq!(disk.write_sector(0, &[0; SECTOR_SIZE]), Err(DiskError::ReadOnly));
+    }
+}
