@@ -72,13 +72,22 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     ));
     allocator::init_heap(&mut mapper, &mut frame_allocator).expect("heap initialization failed");
     log_ok(format_args!("kernel heap, {} KiB", allocator::HEAP_SIZE / 1024));
+    log_ok(format_args!("block storage, filesystem persistence"));
     log_ok(format_args!("in-memory filesystem + shell\n"));
 
     let mut shell = shell::Shell::new();
     shell.start();
+    let mut scheduler = task::Scheduler::new();
+    scheduler.spawn_sleep("kernel housekeeping", 1);
+    let mut executor = task::executor::Executor::new();
+    executor.spawn(async {
+        task::timer::sleep(1).await;
+    });
 
     loop {
         task::tick();
+        scheduler.poll();
+        executor.poll();
         // Check for input with interrupts off, so a key can't slip in between
         // "queue is empty" and "go to sleep". enable_and_hlt does both atomically.
         x86_64::instructions::interrupts::disable();

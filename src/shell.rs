@@ -4,16 +4,21 @@ use crate::editor::Editor;
 use crate::fs::FileSystem;
 use crate::interrupts::TICKS;
 use crate::keyboard::Key;
+use crate::drivers::{BlockDevice, MemoryDisk};
+use crate::storage;
 use crate::vga::{Color, WRITER};
 use crate::{allocator, memory, print, println};
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use alloc::boxed::Box;
 use core::sync::atomic::Ordering;
 use x86_64::instructions::port::Port;
 
 const MAX_HISTORY: usize = 50;
 const MAX_SCRIPT_DEPTH: usize = 3;
+const FS_START_SECTOR: u64 = 1;
+const FS_SECTORS: u64 = 2047;
 
 pub struct Shell {
     fs: FileSystem,
@@ -24,10 +29,15 @@ pub struct Shell {
     saved_line: String,
     text_color: Color,
     editor: Option<Editor>,
+    disk: Box<dyn BlockDevice>,
 }
 
 impl Shell {
     pub fn new() -> Self {
+        Self::with_disk(MemoryDisk::new(FS_SECTORS + FS_START_SECTOR).expect("memory disk initialization failed"))
+    }
+
+    pub fn with_disk<D: BlockDevice + 'static>(disk: D) -> Self {
         Shell {
             fs: FileSystem::new(),
             line: String::new(),
@@ -37,12 +47,27 @@ impl Shell {
             saved_line: String::new(),
             text_color: Color::White,
             editor: None,
+            disk: Box::new(disk),
         }
     }
 
     /// Create the default files, run the startup script, show the first prompt.
     pub fn start(&mut self) {
-        self.seed_filesystem();
+        match storage::load_filesystem(&mut *self.disk, FS_START_SECTOR, FS_SECTORS) {
+            Ok(Some(fs)) => {
+                self.fs = fs;
+                let _ = self.fs.chdir("/home");
+            }
+            Ok(None) => {
+                self.seed_filesystem();
+                self.persist();
+            }
+            Err(error) => {
+                println!("storage: unable to load filesystem ({:?}); using a new filesystem", error);
+                self.seed_filesystem();
+                self.persist();
+            }
+        }
         set_color(self.text_color);
         self.run_script("/etc/startup.sh", 0);
         self.redraw_line();
@@ -191,10 +216,17 @@ impl Shell {
         };
         if done {
             self.editor = None;
+            self.persist();
             WRITER.lock().redraw();
             self.redraw_line();
         } else if let Some(ed) = &self.editor {
             ed.draw();
+        }
+    }
+
+    fn persist(&mut self) {
+        if let Err(error) = storage::save_filesystem(&mut *self.disk, FS_START_SECTOR, FS_SECTORS, &self.fs) {
+            println!("storage: unable to save filesystem ({:?})", error);
         }
     }
 
@@ -252,7 +284,9 @@ impl Shell {
                     let mut data = text.as_bytes().to_vec();
                     data.push(b'\n');
                     let r = self.fs.write(file, data, append);
+                    let changed = r.is_ok();
                     ok(cmd, r);
+                    if changed { self.persist(); }
                 }
                 None => println!("{}", args),
             },
@@ -296,7 +330,9 @@ impl Shell {
                     let mut data = text.as_bytes().to_vec();
                     data.push(b'\n');
                     let r = self.fs.write(file, data, false);
+                    let changed = r.is_ok();
                     ok(cmd, r);
+                    if changed { self.persist(); }
                 }
                 None => println!("usage: write <file> <text>"),
             },
@@ -304,21 +340,27 @@ impl Shell {
                 for path in args.split_whitespace() {
                     if !self.fs.exists(path) {
                         let r = self.fs.write(path, Vec::new(), false);
+                        let changed = r.is_ok();
                         ok(cmd, r);
+                        if changed { self.persist(); }
                     }
                 }
             }
             "mkdir" => {
                 for path in args.split_whitespace() {
                     let r = self.fs.mkdir(path);
+                    let changed = r.is_ok();
                     ok(cmd, r);
+                    if changed { self.persist(); }
                 }
             }
             "rm" => {
                 let recursive = args.split_whitespace().any(|a| a == "-r");
                 for path in args.split_whitespace().filter(|a| *a != "-r") {
                     let r = self.fs.remove(path, recursive);
+                    let changed = r.is_ok();
                     ok(cmd, r);
+                    if changed { self.persist(); }
                 }
             }
             "cp" | "mv" => {
@@ -326,7 +368,9 @@ impl Shell {
                 match (it.next(), it.next(), it.next()) {
                     (Some(a), Some(b), None) => {
                         let r = if cmd == "cp" { self.fs.copy(a, b) } else { self.fs.rename(a, b) };
+                        let changed = r.is_ok();
                         ok(cmd, r);
+                        if changed { self.persist(); }
                     }
                     _ => println!("usage: {} <from> <to>", cmd),
                 }
