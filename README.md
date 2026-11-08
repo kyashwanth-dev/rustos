@@ -43,9 +43,9 @@ Ctrl+A / Ctrl+E = start / end of line. Caps Lock and Shift work.
   process ranges, returns values in `rax`, and supports `getpid`, `write`,
   `yield`, and `exit`. The address-space manager also exposes the CR3
   activation primitive for the eventual ring-3 scheduler.
-- `gui` opens a lightweight interactive text desktop. Use arrow keys or
-  `Tab` to select Files, Tasks, System, or Shell; press `Enter` to open a
-  panel and `Esc` to return to the command prompt.
+- `gui` opens a 320x200 graphical desktop with a background, panels, status
+  area, and taskbar. Use arrow keys or `Tab` to select Files, Tasks, System,
+  or Shell; press `Enter` to open a panel and `Esc` to return to the prompt.
 - Source layout: `vga.rs` screen+scrollback, `keyboard.rs` scancodes->keys,
   `fs.rs` filesystem, `editor.rs` editor, `shell.rs` commands, `memory.rs` +
   `allocator.rs` paging and heap, `gdt.rs`/`interrupts.rs`/`pic.rs` CPU+hardware.
