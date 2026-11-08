@@ -268,6 +268,100 @@ impl FileSystem {
     pub fn total_bytes(&self) -> usize {
         self.root.size()
     }
+
+    /// Encode the complete tree so it can be handed to the storage layer.
+    pub fn snapshot(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"FS01");
+        let mut entries = Vec::new();
+        collect_snapshot(&self.root, &mut Vec::new(), &mut entries);
+        out.extend_from_slice(&(entries.len() as u32).to_le_bytes());
+        for (path, is_dir, data) in entries {
+            out.push(u8::from(is_dir));
+            out.extend_from_slice(&(path.len() as u32).to_le_bytes());
+            out.extend_from_slice(path.as_bytes());
+            out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            out.extend_from_slice(&data);
+        }
+        out
+    }
+
+    /// Restore a tree produced by [`FileSystem::snapshot`].
+    pub fn from_snapshot(bytes: &[u8]) -> FsResult<Self> {
+        let mut input = SnapshotReader { bytes, position: 0 };
+        if input.take(4)? != b"FS01" {
+            return Err("unsupported filesystem snapshot".to_string());
+        }
+        let count = input.u32()? as usize;
+        let mut fs = Self::new();
+        for _ in 0..count {
+            let is_dir = input.byte()? != 0;
+            let path = input.string()?;
+            let data = input.bytes()?;
+            if path.is_empty() || !path.starts_with('/') {
+                return Err("invalid filesystem snapshot path".to_string());
+            }
+            if is_dir {
+                fs.mkdir(&path).map_err(|_| "invalid filesystem snapshot tree".to_string())?;
+            } else {
+                fs.write(&path, data.to_vec(), false)
+                    .map_err(|_| "invalid filesystem snapshot tree".to_string())?;
+            }
+        }
+        Ok(fs)
+    }
+}
+
+fn collect_snapshot(node: &Node, path: &mut Vec<String>, out: &mut Vec<(String, bool, Vec<u8>)>) {
+    if let Node::Dir(map) = node {
+        for (name, child) in map {
+            path.push(name.clone());
+            let path_string = join(path);
+            match child {
+                Node::Dir(_) => {
+                    out.push((path_string, true, Vec::new()));
+                    collect_snapshot(child, path, out);
+                }
+                Node::File(data) => out.push((path_string, false, data.clone())),
+            }
+            path.pop();
+        }
+    }
+}
+
+struct SnapshotReader<'a> {
+    bytes: &'a [u8],
+    position: usize,
+}
+
+impl<'a> SnapshotReader<'a> {
+    fn take(&mut self, length: usize) -> FsResult<&'a [u8]> {
+        let end = self.position.checked_add(length).ok_or("snapshot too large".to_string())?;
+        let result = self.bytes.get(self.position..end).ok_or("truncated filesystem snapshot".to_string())?;
+        self.position = end;
+        Ok(result)
+    }
+
+    fn byte(&mut self) -> FsResult<u8> {
+        Ok(self.take(1)?[0])
+    }
+
+    fn u32(&mut self) -> FsResult<u32> {
+        Ok(u32::from_le_bytes(self.take(4)?.try_into().map_err(|_| "invalid snapshot integer".to_string())?))
+    }
+
+    fn string(&mut self) -> FsResult<String> {
+        let length = self.u32()? as usize;
+        let bytes = self.take(length)?;
+        core::str::from_utf8(bytes)
+            .map(ToString::to_string)
+            .map_err(|_| "invalid utf-8 in filesystem snapshot".to_string())
+    }
+
+    fn bytes(&mut self) -> FsResult<&'a [u8]> {
+        let length = self.u32()? as usize;
+        self.take(length)
+    }
 }
 
 fn walk_map(map: &BTreeMap<String, Node>, depth: usize, out: &mut Vec<(usize, String, bool)>) {

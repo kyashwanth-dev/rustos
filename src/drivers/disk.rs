@@ -25,7 +25,8 @@ pub trait BlockDevice {
             return Err(DiskError::InvalidBuffer);
         }
         for (index, chunk) in buffer.chunks_exact_mut(SECTOR_SIZE).enumerate() {
-            self.read_sector(start + index as u64, chunk)?;
+            let sector = start.checked_add(index as u64).ok_or(DiskError::OutOfBounds)?;
+            self.read_sector(sector, chunk)?;
         }
         Ok(())
     }
@@ -35,7 +36,8 @@ pub trait BlockDevice {
             return Err(DiskError::InvalidBuffer);
         }
         for (index, chunk) in buffer.chunks_exact(SECTOR_SIZE).enumerate() {
-            self.write_sector(start + index as u64, chunk)?;
+            let sector = start.checked_add(index as u64).ok_or(DiskError::OutOfBounds)?;
+            self.write_sector(sector, chunk)?;
         }
         Ok(())
     }
