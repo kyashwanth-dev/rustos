@@ -6,8 +6,41 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use crate::gdt;
+use x86_64::registers::rflags::RFlags;
+use x86_64::structures::gdt::SegmentSelector;
+use x86_64::VirtAddr;
 
 pub type ProcessId = u64;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UserContext {
+    pub instruction_pointer: VirtAddr,
+    pub stack_pointer: VirtAddr,
+    pub cpu_flags: RFlags,
+    pub code_selector: SegmentSelector,
+    pub stack_selector: SegmentSelector,
+}
+
+impl UserContext {
+    pub fn new(entry_point: u64, stack_pointer: u64) -> Self {
+        Self {
+            instruction_pointer: VirtAddr::new(entry_point),
+            stack_pointer: VirtAddr::new(stack_pointer),
+            cpu_flags: RFlags::INTERRUPT_FLAG,
+            code_selector: gdt::user_code_selector(),
+            stack_selector: gdt::user_data_selector(),
+        }
+    }
+
+    pub fn is_valid(&self, address_space: AddressSpace) -> bool {
+        self.code_selector.rpl() == x86_64::PrivilegeLevel::Ring3
+            && self.stack_selector.rpl() == x86_64::PrivilegeLevel::Ring3
+            && address_space.contains_code(self.instruction_pointer.as_u64())
+            && address_space.contains_stack(self.stack_pointer.as_u64().saturating_sub(1))
+            && self.cpu_flags.contains(RFlags::INTERRUPT_FLAG)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UserImage {
@@ -115,6 +148,8 @@ pub struct Process {
     pub address_space: AddressSpace,
     pub entry_point: u64,
     pub stack_pointer: u64,
+    pub page_table_root: Option<u64>,
+    pub user_context: Option<UserContext>,
 }
 
 pub struct ProcessTable {
@@ -138,6 +173,8 @@ impl ProcessTable {
             address_space,
             entry_point: address_space.code_start,
             stack_pointer: address_space.stack_end,
+            page_table_root: None,
+            user_context: None,
         });
         id
     }
@@ -153,6 +190,8 @@ impl ProcessTable {
             address_space,
             entry_point: image.entry_point,
             stack_pointer: address_space.stack_end,
+            page_table_root: None,
+            user_context: Some(UserContext::new(image.entry_point, address_space.stack_end)),
         });
         Some(id)
     }
@@ -188,6 +227,19 @@ impl ProcessTable {
         self.processes.iter().find(|process| process.id == id)
     }
 
+    pub fn user_context(&self, id: ProcessId) -> Option<UserContext> {
+        self.get(id).and_then(|process| process.user_context)
+    }
+
+    pub fn set_page_table_root(&mut self, id: ProcessId, root: u64) -> bool {
+        if let Some(process) = self.processes.iter_mut().find(|process| process.id == id) {
+            process.page_table_root = Some(root);
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn list(&self) -> impl Iterator<Item = &Process> {
         self.processes.iter()
     }
@@ -210,7 +262,7 @@ impl ProcessTable {
 
 #[cfg(test)]
 mod tests {
-    use super::{AddressSpace, ProcessState, ProcessTable};
+    use super::{AddressSpace, ProcessState, ProcessTable, UserContext};
 
     #[test]
     fn user_ranges_must_fit_one_region() {
@@ -256,5 +308,15 @@ mod tests {
             data_size: 1,
             stack_size: 1,
         }).is_none());
+    }
+
+    #[test]
+    fn user_process_has_a_valid_ring3_context() {
+        let mut table = ProcessTable::new();
+        let id = table.create_user("user", super::UserImage::demo()).unwrap();
+        let process = table.get(id).unwrap();
+        assert!(process.user_context.unwrap().is_valid(process.address_space));
+        assert_eq!(process.page_table_root, None);
+        assert_eq!(UserContext::new(1, 2).code_selector.rpl(), x86_64::PrivilegeLevel::Ring3);
     }
 }

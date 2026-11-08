@@ -34,10 +34,11 @@ Ctrl+A / Ctrl+E = start / end of line. Caps Lock and Shift work.
   snapshot.
 - `sleep` and `spawn` create cooperative async tasks. `tasks` shows their
   sleeping, running, finished, or cancelled lifecycle state.
-- `process.rs` and `syscall.rs` provide validated process lifecycle and syscall
-  ABI groundwork. `userdemo` prepares a validated user image layout and the
-  IDT exposes a ring-3 `int 0x80` syscall gate. Per-process page-table
-  switching and execution are still planned.
+- `process.rs` and `syscall.rs` provide validated process lifecycle, ring-3
+  launch/return contexts, and syscall ABI validation. `userdemo` prepares a
+  validated user image layout and the IDT exposes a ring-3 `int 0x80` syscall
+  gate. Physical page-table allocation, user image loading, and the final CR3
+  switch remain the next memory-manager integration step.
 - Source layout: `vga.rs` screen+scrollback, `keyboard.rs` scancodes->keys,
   `fs.rs` filesystem, `editor.rs` editor, `shell.rs` commands, `memory.rs` +
   `allocator.rs` paging and heap, `gdt.rs`/`interrupts.rs`/`pic.rs` CPU+hardware.

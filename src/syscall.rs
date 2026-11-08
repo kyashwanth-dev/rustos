@@ -4,7 +4,7 @@
 //! explicit about the process table so user-memory access can never bypass
 //! ownership and bounds checks.
 
-use crate::process::{ProcessId, ProcessState, ProcessTable};
+use crate::process::{ProcessId, ProcessState, ProcessTable, UserContext};
 use core::sync::atomic::{AtomicU64, Ordering};
 
 pub const SYS_EXIT: u64 = 1;
@@ -27,9 +27,25 @@ pub enum SyscallError {
     Unknown,
     NoSuchProcess,
     InvalidPointer,
+    InvalidContext,
 }
 
 pub type SyscallResult = Result<u64, SyscallError>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SyscallReturn {
+    pub value: u64,
+    pub context: UserContext,
+}
+
+pub fn return_to_user(processes: &ProcessTable, process_id: ProcessId, value: u64) -> Result<SyscallReturn, SyscallError> {
+    let process = processes.get(process_id).ok_or(SyscallError::NoSuchProcess)?;
+    let context = process.user_context.ok_or(SyscallError::InvalidContext)?;
+    if !context.is_valid(process.address_space) {
+        return Err(SyscallError::InvalidContext);
+    }
+    Ok(SyscallReturn { value, context })
+}
 
 pub fn dispatch(
     processes: &mut ProcessTable,
@@ -112,5 +128,18 @@ mod tests {
         assert_eq!(dispatch(&mut table, id, super::SYS_YIELD, 0, 0, 0), Ok(0));
         table.exit(id, 0);
         assert_eq!(dispatch(&mut table, id, super::SYS_GETPID, 0, 0, 0), Err(SyscallError::NoSuchProcess));
+    }
+
+    #[test]
+    fn return_contract_preserves_a_valid_user_context() {
+        let (table, id) = {
+            let mut table = ProcessTable::new();
+            let id = table.create_user("user", crate::process::UserImage::demo()).unwrap();
+            (table, id)
+        };
+        let returned = super::return_to_user(&table, id, 42).unwrap();
+        assert_eq!(returned.value, 42);
+        let process = table.get(id).unwrap();
+        assert!(returned.context.is_valid(process.address_space));
     }
 }

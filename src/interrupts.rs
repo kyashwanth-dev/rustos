@@ -89,6 +89,12 @@ extern "x86-interrupt" fn keyboard_handler(_stack_frame: InterruptStackFrame) {
     unsafe { PICS.lock().end_of_interrupt(KEYBOARD_VECTOR) };
 }
 
-extern "x86-interrupt" fn syscall_handler(_stack_frame: InterruptStackFrame) {
+extern "x86-interrupt" fn syscall_handler(stack_frame: InterruptStackFrame) {
     crate::syscall::record_entry();
+    // The interrupt ABI returns through the CPU-built frame. Keeping this
+    // handler side-effect free until a process context is installed prevents
+    // accidental kernel-to-user privilege transitions.
+    if stack_frame.code_segment.rpl() != PrivilegeLevel::Ring3 {
+        println!("SYSCALL: rejected non-user caller");
+    }
 }
