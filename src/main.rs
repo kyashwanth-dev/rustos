@@ -19,6 +19,7 @@ mod shell;
 mod storage;
 mod syscall;
 mod task;
+mod ui;
 mod vga;
 
 use bootloader::{entry_point, BootInfo};
