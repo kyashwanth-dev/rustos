@@ -308,6 +308,7 @@ impl Shell {
     fn leave_gui(&mut self) {
         self.gui_mode = false;
         self.gui_status = String::from("Returned to shell");
+        ui::leave();
         WRITER.lock().clear();
         self.redraw_line();
     }
@@ -429,6 +430,7 @@ impl Shell {
                 self.gui_mode = true;
                 self.gui_focus = 0;
                 self.gui_status = String::from("Ready");
+                ui::enter();
                 self.draw_gui();
             }
             "pwd" => println!("{}", self.fs.cwd_string()),
