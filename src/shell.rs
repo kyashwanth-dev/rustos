@@ -7,6 +7,7 @@ use crate::keyboard::Key;
 use crate::drivers::{ata::AtaPio, BlockDevice, MemoryDisk};
 use crate::storage;
 use crate::task::{Scheduler, TaskState};
+use crate::ui;
 use crate::vga::{Color, WRITER};
 use crate::{allocator, memory, print, println};
 use alloc::format;
@@ -87,6 +88,7 @@ impl Shell {
             }
         }
         set_color(self.text_color);
+        ui::draw(&self.fs.cwd_string());
         self.run_script("/etc/startup.sh", 0);
         self.redraw_line();
     }
@@ -309,6 +311,7 @@ impl Shell {
                 None => println!("{}", args),
             },
             "clear" => WRITER.lock().clear(),
+            "ui" | "desktop" => ui::draw(&self.fs.cwd_string()),
             "pwd" => println!("{}", self.fs.cwd_string()),
             "cd" => {
                 let target = if args.is_empty() { "/" } else { args };
@@ -581,7 +584,7 @@ fn print_help() {
     println!("         cp a b   mv a b   cd d   pwd   tree [dir]   echo text > f (or >>)");
     println!("Editor:  edit f      (Ctrl+S save, Ctrl+X exit)");
     println!("System:  uptime  tasks  sleep <seconds>  spawn <seconds>  cancel <task-id>  mem  history");
-    println!("         run <script>  color <name>  clear  rev");
+    println!("         run <script>  color <name>  clear  ui  rev");
     println!("         about  reboot  panic  fault");
     println!("Keys:    Up/Down history, Left/Right/Home/End edit the line,");
     println!("         PgUp/PgDn scroll back, Ctrl+L clear, Ctrl+C cancel, Ctrl+U kill line");

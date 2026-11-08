@@ -18,7 +18,7 @@ cargo run
 ## Shell commands
 Files: `ls [dir]  cat f  write f text  touch f  mkdir d  rm [-r] p  cp a b  mv a b  cd d  pwd  tree [dir]  echo text > f  (or >>)`
 Editor: `edit f` (Ctrl+S save, Ctrl+X exit; press Ctrl+X twice to discard changes)
-System: `uptime  tasks  sleep <seconds>  spawn <seconds>  cancel <task-id>  mem  history  run <script>  color <name>  clear  rev  about  reboot  panic  fault`
+System: `uptime  tasks  sleep <seconds>  spawn <seconds>  cancel <task-id>  mem  history  run <script>  color <name>  clear  ui  rev  about  reboot  panic  fault`
 
 ## Keys
 Up/Down = history, Left/Right/Home/End = edit the line, Delete/Backspace,
