@@ -1,5 +1,4 @@
-//! A simple in-memory filesystem: a tree of directories and files on the heap.
-//! Nothing here touches a disk, so everything is lost on reboot.
+//! A simple filesystem tree held on the heap and serialized by the storage layer.
 
 use alloc::collections::BTreeMap;
 use alloc::format;

@@ -10,6 +10,46 @@ use alloc::vec::Vec;
 pub type ProcessId = u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UserImage {
+    pub entry_point: u64,
+    pub code_size: u64,
+    pub data_size: u64,
+    pub stack_size: u64,
+}
+
+impl UserImage {
+    pub const fn demo() -> Self {
+        Self {
+            entry_point: 0x0040_0000,
+            code_size: 4096,
+            data_size: 4096,
+            stack_size: 4096 * 2,
+        }
+    }
+
+    pub fn address_space(&self) -> Option<AddressSpace> {
+        let code_end = self.entry_point.checked_add(self.code_size)?;
+        let data_start = align_up(code_end)?;
+        let data_end = data_start.checked_add(self.data_size)?;
+        let stack_start = align_up(data_end)?;
+        let stack_end = stack_start.checked_add(self.stack_size)?;
+        let address_space = AddressSpace {
+            code_start: self.entry_point,
+            code_end,
+            data_start,
+            data_end,
+            stack_start,
+            stack_end,
+        };
+        address_space.is_valid().then_some(address_space)
+    }
+}
+
+fn align_up(value: u64) -> Option<u64> {
+    value.checked_add(0xfff).map(|aligned| aligned & !0xfff)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AddressSpace {
     pub code_start: u64,
     pub code_end: u64,
@@ -73,6 +113,8 @@ pub struct Process {
     pub name: String,
     pub state: ProcessState,
     pub address_space: AddressSpace,
+    pub entry_point: u64,
+    pub stack_pointer: u64,
 }
 
 pub struct ProcessTable {
@@ -94,8 +136,25 @@ impl ProcessTable {
             name: String::from(name),
             state: ProcessState::Ready,
             address_space,
+            entry_point: address_space.code_start,
+            stack_pointer: address_space.stack_end,
         });
         id
+    }
+
+    pub fn create_user(&mut self, name: &str, image: UserImage) -> Option<ProcessId> {
+        let address_space = image.address_space()?;
+        let id = self.next_id;
+        self.next_id = self.next_id.saturating_add(1);
+        self.processes.push(Process {
+            id,
+            name: String::from(name),
+            state: ProcessState::Ready,
+            address_space,
+            entry_point: image.entry_point,
+            stack_pointer: address_space.stack_end,
+        });
+        Some(id)
     }
 
     pub fn switch_to(&mut self, id: ProcessId) -> bool {
@@ -176,5 +235,26 @@ mod tests {
         assert!(table.current().is_none());
         assert!(!table.exit(id, 8));
         assert!(!table.switch_to(id));
+    }
+
+    #[test]
+    fn user_images_produce_non_overlapping_aligned_regions() {
+        let image = UserImage::demo();
+        let space = image.address_space().unwrap();
+        assert_eq!(space.data_start % 4096, 0);
+        assert_eq!(space.stack_start % 4096, 0);
+        assert!(space.contains_code(image.entry_point));
+        assert!(space.contains_stack(space.stack_end - 1));
+    }
+
+    #[test]
+    fn invalid_user_image_is_rejected() {
+        let mut table = ProcessTable::new();
+        assert!(table.create_user("bad", UserImage {
+            entry_point: u64::MAX,
+            code_size: 1,
+            data_size: 1,
+            stack_size: 1,
+        }).is_none());
     }
 }

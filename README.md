@@ -18,7 +18,7 @@ cargo run
 ## Shell commands
 Files: `ls [dir]  cat f  write f text  touch f  mkdir d  rm [-r] p  cp a b  mv a b  cd d  pwd  tree [dir]  echo text > f  (or >>)`
 Editor: `edit f` (Ctrl+S save, Ctrl+X exit; press Ctrl+X twice to discard changes)
-System: `uptime  tasks  sleep <seconds>  spawn <seconds>  cancel <task-id>  ps  proc <name>  kill <pid>  mem  history  run <script>  color <name>  clear  ui  rev  about  reboot  panic  fault`
+System: `uptime  tasks  sleep <seconds>  spawn <seconds>  cancel <task-id>  ps  proc <name>  kill <pid>  mem  history  run <script>  userdemo  color <name>  clear  ui  rev  about  reboot  panic  fault`
 
 ## Keys
 Up/Down = history, Left/Right/Home/End = edit the line, Delete/Backspace,
@@ -29,12 +29,15 @@ Ctrl+A / Ctrl+E = start / end of line. Caps Lock and Shift work.
 - The filesystem probes the primary-master ATA disk at boot and falls back to
   the memory disk when no usable ATA device is present. The fallback resets on
   reboot.
+- Filesystem snapshots use two alternating journal slots with generation
+  numbers and checksums. An interrupted write falls back to the last complete
+  snapshot.
 - `sleep` and `spawn` create cooperative async tasks. `tasks` shows their
   sleeping, running, finished, or cancelled lifecycle state.
 - `process.rs` and `syscall.rs` provide validated process lifecycle and syscall
-  ABI groundwork. `ps`, `proc`, and `kill` expose the kernel process table;
-  user-mode page-table switching and a real syscall entry point are not
-  implemented yet.
+  ABI groundwork. `userdemo` prepares a validated user image layout and the
+  IDT exposes a ring-3 `int 0x80` syscall gate. Per-process page-table
+  switching and execution are still planned.
 - Source layout: `vga.rs` screen+scrollback, `keyboard.rs` scancodes->keys,
   `fs.rs` filesystem, `editor.rs` editor, `shell.rs` commands, `memory.rs` +
   `allocator.rs` paging and heap, `gdt.rs`/`interrupts.rs`/`pic.rs` CPU+hardware.
