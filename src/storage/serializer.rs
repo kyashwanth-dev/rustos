@@ -26,7 +26,7 @@ pub fn decode(bytes: &[u8]) -> Option<&[u8]> {
     (checksum(data) == sum).then_some(data)
 }
 
-fn checksum(data: &[u8]) -> u32 {
+pub(crate) fn checksum(data: &[u8]) -> u32 {
     data.iter().fold(2166136261u32, |hash, byte| {
         hash.wrapping_mul(16777619) ^ u32::from(*byte)
     })

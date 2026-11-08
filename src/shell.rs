@@ -7,7 +7,7 @@ use crate::keyboard::Key;
 use crate::drivers::{ata::AtaPio, BlockDevice, MemoryDisk};
 use crate::storage;
 use crate::task::{Scheduler, TaskState};
-use crate::process::{AddressSpace, ProcessState, ProcessTable};
+use crate::process::{AddressSpace, ProcessState, ProcessTable, UserImage};
 use crate::ui;
 use crate::vga::{Color, WRITER};
 use crate::{allocator, memory, print, println};
@@ -113,12 +113,12 @@ impl Shell {
         );
         let _ = fs.write(
             "/etc/startup.sh",
-            b"# These commands run at every boot (edit me with: edit /etc/startup.sh).\n# The filesystem lives in RAM, so changes reset when you reboot.\ncat /etc/motd\n".to_vec(),
+            b"# These commands run at every boot (edit me with: edit /etc/startup.sh).\n# Files are restored from storage when available.\ncat /etc/motd\n".to_vec(),
             false,
         );
         let _ = fs.write(
             "/home/readme.txt",
-            b"RustOS filesystem\n-----------------\nFiles live in RAM (heap) and vanish on reboot.\nTry:  mkdir stuff   cd stuff   echo hello > hi.txt   cat hi.txt\n      edit notes.txt  (Ctrl+S saves, Ctrl+X exits)\n".to_vec(),
+            b"RustOS filesystem\n-----------------\nFiles are persisted to the boot disk when available.\nTry:  mkdir stuff   cd stuff   echo hello > hi.txt   cat hi.txt\n      edit notes.txt  (Ctrl+S saves, Ctrl+X exits)\n".to_vec(),
             false,
         );
         let _ = fs.chdir("/home");
@@ -554,6 +554,26 @@ impl Shell {
                 println!("RustOS - a hobby kernel written in Rust.");
                 println!("GDT, IDT, PIC, keyboard, paging, heap, filesystem, editor, shell.");
             }
+            "userdemo" => {
+                match self.processes.create_user("user-demo", UserImage::demo()) {
+                    Some(id) => {
+                        let process = self.processes.get(id).expect("new process missing");
+                        let data_start = process.address_space.data_start;
+                        println!("user process {} prepared: {}", id, process.name);
+                        println!(" entry  {:#x}", process.entry_point);
+                        println!(" stack  {:#x}", process.stack_pointer);
+                        println!(" syscall gate: int {:#x}, {} entries", crate::interrupts::SYSCALL_VECTOR, crate::syscall::entry_count());
+                        println!(" getpid: {:?}", crate::syscall::dispatch(
+                            &mut self.processes, id, crate::syscall::SYS_GETPID, 0, 0, 0
+                        ));
+                        println!(" write(data): {:?}", crate::syscall::dispatch(
+                            &mut self.processes, id, crate::syscall::SYS_WRITE,
+                            data_start, 1, 0
+                        ));
+                    }
+                    None => println!("userdemo: invalid image"),
+                }
+            }
             "panic" => panic!("you asked for it"),
             "fault" => {
                 // Write to an address that isn't mapped to anything.
@@ -618,7 +638,7 @@ fn print_help() {
     println!("Files:   ls [dir]   cat f   write f text   touch f   mkdir d   rm [-r] p");
     println!("         cp a b   mv a b   cd d   pwd   tree [dir]   echo text > f (or >>)");
     println!("Editor:  edit f      (Ctrl+S save, Ctrl+X exit)");
-    println!("System:  uptime  tasks  sleep <seconds>  spawn <seconds>  cancel <task-id>  ps  proc <name>  kill <pid>");
+    println!("System:  uptime  tasks  sleep <seconds>  spawn <seconds>  cancel <task-id>  ps  proc <name>  kill <pid>  userdemo");
     println!("         run <script>  color <name>  clear  ui  rev");
     println!("         about  reboot  panic  fault");
     println!("Keys:    Up/Down history, Left/Right/Home/End edit the line,");

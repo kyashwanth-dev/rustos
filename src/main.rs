@@ -76,7 +76,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     allocator::init_heap(&mut mapper, &mut frame_allocator).expect("heap initialization failed");
     log_ok(format_args!("kernel heap, {} KiB", allocator::HEAP_SIZE / 1024));
     log_ok(format_args!("block storage, filesystem persistence"));
-    log_ok(format_args!("in-memory filesystem + shell\n"));
+    log_ok(format_args!("filesystem + shell\n"));
 
     let mut shell = shell::Shell::new();
     shell.start();

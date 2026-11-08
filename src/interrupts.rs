@@ -7,11 +7,13 @@ use lazy_static::lazy_static;
 use x86_64::instructions::port::Port;
 use x86_64::registers::control::Cr2;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
+use x86_64::PrivilegeLevel;
 
 pub const PIC_1_OFFSET: u8 = 32;
 pub const PIC_2_OFFSET: u8 = 40;
 const TIMER_VECTOR: u8 = PIC_1_OFFSET; // IRQ0
 const KEYBOARD_VECTOR: u8 = PIC_1_OFFSET + 1; // IRQ1
+pub const SYSCALL_VECTOR: u8 = 0x80;
 
 pub static PICS: spin::Mutex<ChainedPics> =
     spin::Mutex::new(unsafe { ChainedPics::new(PIC_1_OFFSET, PIC_2_OFFSET) });
@@ -31,6 +33,9 @@ lazy_static! {
         idt.page_fault.set_handler_fn(page_fault_handler);
         idt[TIMER_VECTOR].set_handler_fn(timer_handler);
         idt[KEYBOARD_VECTOR].set_handler_fn(keyboard_handler);
+        idt[SYSCALL_VECTOR]
+            .set_handler_fn(syscall_handler)
+            .set_privilege_level(PrivilegeLevel::Ring3);
         idt
     };
 }
@@ -82,4 +87,8 @@ extern "x86-interrupt" fn keyboard_handler(_stack_frame: InterruptStackFrame) {
     }
 
     unsafe { PICS.lock().end_of_interrupt(KEYBOARD_VECTOR) };
+}
+
+extern "x86-interrupt" fn syscall_handler(_stack_frame: InterruptStackFrame) {
+    crate::syscall::record_entry();
 }

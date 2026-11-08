@@ -1,12 +1,26 @@
-//! Syscall ABI groundwork.
+//! Syscall ABI validation and dispatch.
 //!
-//! The dispatcher validates process ownership before a future implementation
-//! can access user memory or perform privileged operations.
+//! The IDT gate is installed for ring-3 callers. The dispatcher remains
+//! explicit about the process table so user-memory access can never bypass
+//! ownership and bounds checks.
 
-use crate::process::{ProcessId, ProcessTable};
+use crate::process::{ProcessId, ProcessState, ProcessTable};
+use core::sync::atomic::{AtomicU64, Ordering};
 
 pub const SYS_EXIT: u64 = 1;
 pub const SYS_WRITE: u64 = 2;
+pub const SYS_GETPID: u64 = 3;
+pub const SYS_YIELD: u64 = 4;
+
+static SYSCALL_ENTRIES: AtomicU64 = AtomicU64::new(0);
+
+pub fn record_entry() {
+    SYSCALL_ENTRIES.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn entry_count() -> u64 {
+    SYSCALL_ENTRIES.load(Ordering::Relaxed)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SyscallError {
@@ -25,20 +39,26 @@ pub fn dispatch(
     arg1: u64,
     _arg2: u64,
 ) -> SyscallResult {
+    let process = processes.get(process_id).ok_or(SyscallError::NoSuchProcess)?;
+    if matches!(process.state, ProcessState::Exited(_)) && number != SYS_EXIT {
+        return Err(SyscallError::NoSuchProcess);
+    }
     match number {
         SYS_EXIT => {
-            if processes.get(process_id).is_none() {
-                return Err(SyscallError::NoSuchProcess);
-            }
             let code = arg0 as i64;
             processes.exit(process_id, code);
             Ok(0)
         }
         SYS_WRITE => {
-            let process = processes.get(process_id).ok_or(SyscallError::NoSuchProcess)?;
             if !process.address_space.contains_user_range(arg0, arg1) {
                 return Err(SyscallError::InvalidPointer);
             }
+            Ok(0)
+        }
+        SYS_GETPID => {
+            Ok(process_id)
+        }
+        SYS_YIELD => {
             Ok(0)
         }
         _ => Err(SyscallError::Unknown),
@@ -83,5 +103,14 @@ mod tests {
         let (mut table, id) = table_with_process();
         assert_eq!(dispatch(&mut table, id, SYS_EXIT, 12, 0, 0), Ok(0));
         assert_eq!(dispatch(&mut table, id, 99, 0, 0, 0), Err(SyscallError::Unknown));
+    }
+
+    #[test]
+    fn getpid_and_yield_require_a_live_process() {
+        let (mut table, id) = table_with_process();
+        assert_eq!(dispatch(&mut table, id, super::SYS_GETPID, 0, 0, 0), Ok(id));
+        assert_eq!(dispatch(&mut table, id, super::SYS_YIELD, 0, 0, 0), Ok(0));
+        table.exit(id, 0);
+        assert_eq!(dispatch(&mut table, id, super::SYS_GETPID, 0, 0, 0), Err(SyscallError::NoSuchProcess));
     }
 }
